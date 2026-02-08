@@ -82,6 +82,97 @@ if is_cross_compile; then
   # cppo runs on BUILD machine to preprocess source files
   # It does NOT need to be cross-compiled to TARGET arch
 
+  # ===========================================================================
+  # FIX: Override AS to use BUILD platform assembler
+  # ===========================================================================
+  # The activation scripts set AS to the cross-assembler (aarch64), but cppo
+  # is a build-time tool that needs the native assembler.
+  #
+  # Available variables:
+  #   CONDA_TOOLCHAIN_BUILD = x86_64-conda-linux-gnu (BUILD platform toolchain)
+  #   CONDA_OCAML_AS = x86_64-conda-linux-gnu-as (OCaml's native assembler)
+  #   CC_FOR_BUILD = native C compiler for BUILD platform
+  #
+  # OCaml's ocamlopt.opt uses AS environment variable for assembly.
+  # ===========================================================================
+
+  echo "=== Fixing toolchain for build-time tool ==="
+  echo "  Current AS: ${AS:-not set}"
+  echo "  Current CC: ${CC:-not set}"
+  echo "  CONDA_TOOLCHAIN_BUILD: ${CONDA_TOOLCHAIN_BUILD:-not set}"
+  echo "  CONDA_OCAML_AS: ${CONDA_OCAML_AS:-not set}"
+  echo "  CC_FOR_BUILD: ${CC_FOR_BUILD:-not set}"
+
+  # ===========================================================================
+  # FIX: Ensure BUILD platform tools are found first in PATH
+  # ===========================================================================
+  # OCaml's ocamlopt does NOT honor the AS environment variable.
+  # It invokes 'as' from PATH. During cross-compilation, the activation scripts
+  # put the cross-toolchain first in PATH, so 'as' resolves to the TARGET assembler.
+  #
+  # Solution: Create a temporary directory with symlinks to BUILD platform tools
+  # and prepend it to PATH. This ensures 'as', 'ld', etc. resolve to x86_64 versions.
+  # ===========================================================================
+
+  BUILD_TOOLS_DIR=$(mktemp -d)
+  echo "  Creating BUILD platform tools directory: ${BUILD_TOOLS_DIR}"
+
+  # Create symlinks for assembler, linker, and common tools
+  if [[ -n "${CONDA_TOOLCHAIN_BUILD:-}" ]]; then
+    for tool in as ld ar nm ranlib objcopy objdump strip; do
+      BUILD_TOOL="${BUILD_PREFIX}/bin/${CONDA_TOOLCHAIN_BUILD}-${tool}"
+      if [[ -x "${BUILD_TOOL}" ]]; then
+        ln -sf "${BUILD_TOOL}" "${BUILD_TOOLS_DIR}/${tool}"
+      fi
+    done
+  fi
+
+  # Prepend to PATH so BUILD tools are found first
+  export PATH="${BUILD_TOOLS_DIR}:${PATH}"
+
+  # Set environment variables for tools that DO honor them
+  if [[ -n "${CONDA_TOOLCHAIN_BUILD:-}" ]]; then
+    export AS="${CONDA_TOOLCHAIN_BUILD}-as"
+    export LD="${CONDA_TOOLCHAIN_BUILD}-ld"
+    export AR="${CONDA_TOOLCHAIN_BUILD}-ar"
+    export RANLIB="${CONDA_TOOLCHAIN_BUILD}-ranlib"
+  fi
+
+  # Override CC to use build platform compiler for any C code
+  if [[ -n "${CC_FOR_BUILD:-}" ]]; then
+    export CC="${CC_FOR_BUILD}"
+  elif [[ -n "${CONDA_TOOLCHAIN_BUILD:-}" ]]; then
+    export CC="${BUILD_PREFIX}/bin/${CONDA_TOOLCHAIN_BUILD}-gcc"
+  fi
+
+  # ===========================================================================
+  # CRITICAL: Override CONDA_OCAML_* environment variables
+  # ===========================================================================
+  # The OCaml activation scripts set these to TARGET tools during cross-compilation.
+  # OCaml's native code compiler uses these when assembling and linking.
+  # We MUST override them to use BUILD platform tools for build-time tools like cppo.
+  # ===========================================================================
+  if [[ -n "${CONDA_TOOLCHAIN_BUILD:-}" ]]; then
+    export CONDA_OCAML_AS="${CONDA_TOOLCHAIN_BUILD}-as"
+    export CONDA_OCAML_LD="${CONDA_TOOLCHAIN_BUILD}-ld"
+    export CONDA_OCAML_AR="${CONDA_TOOLCHAIN_BUILD}-ar"
+    export CONDA_OCAML_RANLIB="${CONDA_TOOLCHAIN_BUILD}-ranlib"
+    export CONDA_OCAML_CC="${BUILD_PREFIX}/bin/${CONDA_TOOLCHAIN_BUILD}-gcc"
+    export CONDA_OCAML_MKEXE="${BUILD_PREFIX}/bin/${CONDA_TOOLCHAIN_BUILD}-gcc -Wl,-E -ldl"
+    export CONDA_OCAML_MKDLL="${BUILD_PREFIX}/bin/${CONDA_TOOLCHAIN_BUILD}-gcc -shared"
+  fi
+
+  # Clear cross-compilation flags that would interfere with build-time tool
+  unset CFLAGS CXXFLAGS LDFLAGS 2>/dev/null || true
+
+  echo "  Overridden AS: ${AS:-not set}"
+  echo "  Overridden CC: ${CC:-not set}"
+  echo "  Overridden LD: ${LD:-not set}"
+  echo "  Overridden CONDA_OCAML_AS: ${CONDA_OCAML_AS:-not set}"
+  echo "  Overridden CONDA_OCAML_CC: ${CONDA_OCAML_CC:-not set}"
+  echo "  which as: $(which as)"
+  echo "  which ld: $(which ld)"
+
   # Ensure we use BUILD compiler (not cross-compiler)
   # The native OCaml compiler should already be in PATH from build deps
 
