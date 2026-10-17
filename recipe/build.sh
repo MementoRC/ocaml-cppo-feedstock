@@ -28,7 +28,7 @@ fi
 
 # Windows: Set install prefix and ensure OCaml binaries are in PATH
 if is_non_unix; then
-  export CPPO_INSTALL_PREFIX="${_PREFIX_}/Library"
+  export CPPO_INSTALL_PREFIX="$(cygpath -m "${PREFIX}")/Library"
   # BUILD_PREFIX is a Win32 path (e.g. D:\bld\...). Appending it raw into a
   # colon-delimited PATH leaves a drive colon mid-list, which MSYS2's automatic
   # PATH conversion then splits on and shreds when it spawns a native process.
