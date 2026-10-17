@@ -1,5 +1,5 @@
 context:
-  build_number: 2
+  build_number: 3
   name: ocaml-cppo
   version: "1.8.0"
 
@@ -19,44 +19,51 @@ source:
 
 build:
   number: ${{ build_number }}
+  script: build.sh
   string: ${{ c_compiler ~ "_" if not unix }}h${{ hash }}_${{ build_number }}
 
 requirements:
   build:
-    - if: unix
+    - if: not unix and c_compiler == "gcc"
       then:
-        - ${{ stdlib("c") }}
-      else:
         - ${{ stdlib("m2w64_c") }}
+      else:
+        - ${{ stdlib("c") }}
+    # vs2022: ocaml no longer brings MSVC; zig: links the bytecode exes
+    - if: not unix and c_compiler != "gcc"
+      then:
+        - ${{ compiler("c") }}
     - ${{ m2 }}bash >=5.2
     - ${{ m2 }}file
     - ${{ m2 }}gawk
     - ${{ m2 }}grep
     - ocaml-dune
-    - ocaml_${{ target_platform }} ${{ ocaml_compiler_version }}.* ${{ c_toolchain }}
-    - if: build_platform != target_platform
+    - ${{ compiler("ocaml") }}
+    - if: not unix
       then:
-        - ocaml ${{ ocaml_compiler_version }}.*
-    # cppo_ocamlbuild is a real OCaml library (ocamlbuild_plugin/dune declares
-    # `library`), so this package ships compiled interfaces and needs a runtime
-    # ocaml constraint. That comes from the host ocaml run_exports - which is why
-    # ignore_run_exports must not list ocaml here.
+        - ocaml_${{ target_platform }} ${{ ocaml_compiler_version }}.* ${{ c_toolchain }}
+    - if: build_platform != target_platform and unix
+      then:
+        - ocaml_${{ build_platform }} ${{ ocaml_compiler_version }}.*
+    - if: build_platform != target_platform and not unix
+      then:
+        - ocaml_${{ build_platform }} ${{ ocaml_compiler_version }}.* gcc_*
     - ocamlbuild
     - if: not unix
       then:
         - ${{ m2 }}coreutils
   host:
     - ocaml ${{ ocaml_compiler_version }}.*
-    - ocaml_${{ target_platform }} ${{ ocaml_compiler_version }}.* ${{ c_toolchain }}
-  # The inherited ocaml run_export carries no build-string glob, so it does not
-  # encode the windows toolchain track. ocaml_win-64 ships gcc_* and vs2022_* at
-  # the same version and build, so constrain the track explicitly. This binds
-  # rather than depends: the ocaml metapackage already pulls an exact
-  # ocaml_${{ target_platform }}, so the constraint always has something to bind.
+    - if: not unix
+      then:
+        - ocaml_${{ target_platform }} ${{ ocaml_compiler_version }}.* ${{ c_toolchain }}
+    - if: build_platform != target_platform
+      then:
+        - ocamlbuild
   run_constraints:
     - if: not unix
       then:
-        - ocaml_${{ target_platform }} * ${{ c_compiler }}_*
+        - ocaml_${{ target_platform }} ${{ ocaml_compiler_version }}.* ${{ c_toolchain }}
 
 tests:
   # Package contents validation (strict)
@@ -84,7 +91,9 @@ tests:
         - testing/test-cppo-arch.py
         - testing/test-cppo-functional.py
     requirements:
-      run:
+      # build-platform python drives the target binary via qemu binfmt on cross
+      # lanes (sparse riscv64/s390x subdirs lack python and file)
+      build:
         - ${{ m2 }}file
         - python >=3.9
 
